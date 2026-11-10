@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NextMaint</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-bajo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.2" fill="currentColor"/><path d="M4.8 8.3l2.2 2.2 4.2-4.6" fill="none" stroke="#0c0819" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-medio" viewBox="0 0 16 16"><path d="M8 1.4l7.2 12.9H.8z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.8M8 11.7v.1" stroke="#0c0819" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-alto" viewBox="0 0 16 16"><path d="M8 .7l7.3 7.3L8 15.3.7 8z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M8 4.4v4.2M8 10.9v.1" stroke="#0c0819" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-offline" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor"/><path d="M4 12l8-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 34 34" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4a6bff"/><stop offset=".5" stop-color="#ffb23e"/><stop offset="1" stop-color="#ff4d79"/></linearGradient></defs>
+        <rect x="3" y="5" width="28" height="19" rx="5" fill="none" stroke="url(#lg)" stroke-width="2.6"/>
+        <path d="M12 29.5h10" stroke="url(#lg)" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M8 15h5l2.5-5 3.5 9 2.5-4H27" fill="none" stroke="#f1edff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      NextMaint
+    </div>
+    <div class="status">
+      <div class="live" id="live" data-state="off"><span class="pulse"></span><span id="liveText">Conectando…</span></div>
+      <time id="clock"></time>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="Resumen del laboratorio">
+    <div>
+      <h1>Estado del laboratorio</h1>
+      <p class="sumline" id="sumLine" data-risk="bajo" aria-live="polite">
+        <svg class="ic" aria-hidden="true"><use id="sumIc" href="#i-bajo"/></svg>
+        <span id="sumTxt">Esperando datos de los equipos…</span>
+      </p>
+      <div class="demo-controls" id="demoControls" hidden>
+        <button class="btn" id="demoStart" type="button">Simular fallo</button>
+        <button class="btn" id="demoReset" type="button" disabled>Quitar simulación</button>
+        <span class="muted" id="demoMessage" role="status"></span>
+      </div>
+    </div>
+    <div>
+      <div class="stack" id="stack" role="img" aria-label="Sin datos">
+        <span class="seg" id="seg-bajo" data-r="bajo"></span>
+        <span class="seg" id="seg-medio" data-r="medio"></span>
+        <span class="seg" id="seg-alto" data-r="alto"></span>
+        <span class="seg" id="seg-offline" data-r="offline"></span>
+      </div>
+      <ul class="legend">
+        <li data-r="bajo"><svg class="ic" aria-hidden="true"><use href="#i-bajo"/></svg><b id="n-bajo">0</b>Riesgo bajo</li>
+        <li data-r="medio"><svg class="ic" aria-hidden="true"><use href="#i-medio"/></svg><b id="n-medio">0</b>Medio</li>
+        <li data-r="alto"><svg class="ic" aria-hidden="true"><use href="#i-alto"/></svg><b id="n-alto">0</b>Alto</li>
+        <li data-r="offline"><svg class="ic" aria-hidden="true"><use href="#i-offline"/></svg><b id="n-offline">0</b>Sin conexión</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="stage">
+    <section class="room" aria-label="Equipos del laboratorio">
+      <div class="floor" id="floor"></div>
+      <div class="empty" id="empty" hidden>
+        <h2>Aún no llegan datos</h2>
+        <p>Inicia el simulador con <code>python agent/simulador.py</code> y los equipos aparecerán aquí.</p>
+      </div>
+    </section>
+
+    <aside class="feed" aria-label="Alertas">
+      <h2>Alertas</h2>
+      <ol class="alerts" id="alerts"></ol>
+      <p class="none" id="noAlerts" hidden>No hay alertas activas. Te avisaremos aquí cuando un equipo suba de nivel de riesgo.</p>
+      <details class="resolved" id="resolvedBox" hidden>
+        <summary>Alertas resueltas (<span id="doneCount">0</span>)</summary>
+        <ol class="alerts" id="done"></ol>
+      </details>
+    </aside>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle" inert>
+  <div class="d-head">
+    <div>
+      <h2 id="dTitle">Equipo</h2>
+      <span class="tag" id="dTag" data-risk="bajo"><svg class="ic" aria-hidden="true"><use href="#i-bajo"/></svg><span id="dTagTxt">Riesgo bajo</span></span>
+    </div>
+    <button class="x" id="dClose" type="button" aria-label="Cerrar detalle">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2l12 12M14 2L2 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <div class="advice" id="dAdvice" data-risk="bajo">
+    <p class="adv-h" id="dAdvH">Todo en orden</p>
+    <p id="dMsg"></p>
+    <ul id="dRec"></ul>
+  </div>
+
+  <div class="gauges">
+    <div class="g" data-k="cpu"><div class="ringwrap"></div><span class="gl">CPU</span></div>
+    <div class="g" data-k="ram"><div class="ringwrap"></div><span class="gl">RAM</span></div>
+    <div class="g" data-k="disco"><div class="ringwrap"></div><span class="gl">Disco</span></div>
+  </div>
+
+  <div class="thermo" id="dThermo">
+    <h3 id="dTempTitle">Temperatura</h3>
+    <div class="scale"><span class="mark" id="mark"><span class="mark-v" id="markV">0 °C</span></span></div>
+    <div class="ticks" aria-hidden="true"><span style="left:0;transform:none">30 °C</span><span style="left:43.75%">65 °C</span><span style="left:62.5%">80 °C</span><span style="left:100%;transform:translateX(-100%)">110 °C</span></div>
+  </div>
+
+  <figure class="chart"><figcaption>CPU en las últimas mediciones</figcaption><div id="chCpu"></div></figure>
+  <figure class="chart"><figcaption id="dTempChartTitle">Temperatura en las últimas mediciones</figcaption><div id="chTemp"></div></figure>
+
+  <p class="meta"><span id="dFree"></span><span id="dUptime"></span><span id="dWhen"></span></p>
+</aside>
+
+<script src="/static/js/app.js" defer></script>
+</body>
+</html>
