@@ -20,7 +20,7 @@ python -m uvicorn backend.main:app --reload
 # Terminal 2: datos de ejemplo (PC-01 a PC-05)
 python agent/simulador.py
 
-# (opcional) agente real en tu propia máquina
+# agente real en tu propia máquina
 python agent/monitor.py
 Abre http://localhost:8000 para el dashboard y http://localhost:8000/docs para la API.
 
