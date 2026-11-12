@@ -57,7 +57,7 @@ def main() -> None:
         datos = medir(args.nombre)
         print(json.dumps(datos, ensure_ascii=False))
         try:
-            r = httpx.post(f"{args.url}/api/mediciones", json=datos, headers=cabeceras, timeout=5)
+            r = httpx.post(f"{args.url}/api/mediciones", json=datos, headers=cabeceras, timeout=15)
             if r.status_code == 401:
                 print("  (el servidor rechazó la clave: revisa --clave)")
             elif r.status_code >= 400:

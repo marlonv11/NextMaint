@@ -1,0 +1,15 @@
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'C:/Users/Lenovo/OneDrive/Documentos/NextMaint/README.md', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/README.md b/C:/Users/Lenovo/OneDrive/Documentos/NextMaint/README.md[m
+[1mindex 0f837a3..1ee0460 100644[m
+[1m--- a/README.md[m
+[1m+++ b/C:/Users/Lenovo/OneDrive/Documentos/NextMaint/README.md[m
+[36m@@ -20,7 +20,7 @@[m [mpython -m uvicorn backend.main:app --reload[m
+ # Terminal 2: datos de ejemplo (PC-01 a PC-05)[m
+ python agent/simulador.py[m
+ [m
+[31m-# (opcional) agente real en tu propia máquina[m
+[32m+[m[32m# agente real en tu propia máquina[m
+ python agent/monitor.py[m
+ Abre http://localhost:8000 para el dashboard y http://localhost:8000/docs para la API.[m
+ [m
