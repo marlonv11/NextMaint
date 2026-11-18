@@ -46,3 +46,14 @@ Siguiente paso: modelo de ML
 1. Generar un CSV sintético con CPU, RAM, disco, temperatura, errores y uptime, etiquetado con risk.evaluar().
 2. Entrenar un clasificador (scikit-learn, por ejemplo RandomForest) en backend/ai/.
 3. Comparar su salida contra las reglas y usarlo en risk.py como alternativa.
+## IA y asistente
+
+**Detección de anomalías (`backend/ia.py`)**: un modelo IsolationForest (scikit-learn) aprende cómo luce el funcionamiento normal de CPU, RAM y disco y da a cada equipo un *índice de anomalía* de 0 a 100 (≥ 70 alta, 40–69 moderada). Es aprendizaje no supervisado: no necesita datos etiquetados.
+- Se entrena con las mediciones reales de la base de datos (sin `PC-DEMO`). Si hay pocas, las completa con datos simulados de uso normal; el dashboard y el asistente muestran con qué datos se entrenó (reales / mixtos / simulados).
+- Se entrena al arrancar y se reentrena solo cada `NEXMAINT_REENTRENAR_MIN` minutos (10 por defecto).
+- Las reglas de `risk.py` siguen decidiendo el nivel de riesgo y las alertas; la IA es un segundo criterio. Si falla, el sistema sigue con las reglas.
+- `GET /api/ia` muestra el estado del modelo.
+
+**Asistente (`backend/chat.py`)**: botón "Asistente IA" del dashboard. Entiende preguntas por palabras clave y responde con datos reales (mediciones, reglas, índice de la IA y programas que más consumen). No es un modelo de lenguaje, funciona sin internet y no inventa datos: las causas se ordenan como "muy probable / probable / posible" según la evidencia disponible. `POST /api/chat` con `{"pregunta": "..."}`.
+
+**Programas que más consumen**: el agente envía ahora los 6 programas con más memoria/CPU (agrupados por nombre). Hay que reconstruir el `.exe` para que lo incluya; los agentes antiguos siguen funcionando, solo sin ese dato.

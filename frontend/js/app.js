@@ -13,6 +13,8 @@
   const ESTADOS = ['bajo', 'medio', 'alto', 'offline'];
   const CIRC = 2 * Math.PI * 42;
   const POLL_MS = 2000, HIST_MAX = 30;
+  const IA_NIVEL = { alta: 'alto', moderada: 'medio', normal: 'bajo' };
+  const mem = mb => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
 
   const st = { tiles: new Map(), hist: new Map(), seenAlerts: null, alertSig: null, sel: null, trigger: null,
                lastChange: Date.now(), ok: false, first: true, conectado: false, demoBusy: false };
@@ -86,7 +88,7 @@
           </span>
         </span>
         <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path class="sa"/><path class="sl"/></svg>
-        <span class="reading"></span>
+        <span class="reading"><span class="rd"></span><span class="ia" hidden></span></span>
       </span>
       <span class="stand"></span><span class="base"></span>`;
     $('.name', b).textContent = name;
@@ -114,8 +116,11 @@
     $('.stat.temp', tile).dataset.level = e.temp_estimada || !e.conectado ? 'bajo' : level('temp', t ?? 0);
     $('.temp-source', tile).hidden = !e.temp_estimada;
     const lectura = ultimaMedicion(e);
-    $('.reading', tile).textContent = lectura;
-    tile.setAttribute('aria-label', `${e.nombre}, ${etiqueta(risk)}, ${lectura}. Abrir detalle`);
+    $('.rd', tile).textContent = lectura;
+    const ia = $('.ia', tile), hayIa = e.conectado && e.anomalia != null;
+    ia.hidden = !hayIa;
+    if (hayIa) { ia.textContent = 'IA ' + e.anomalia + '/100'; ia.dataset.lvl = IA_NIVEL[e.anomalia_nivel] || 'bajo'; ia.title = 'Índice de anomalía de la IA: ' + e.anomalia_nivel; }
+    tile.setAttribute('aria-label', `${e.nombre}, ${etiqueta(risk)}${hayIa ? ', anomalía IA ' + e.anomalia + ' de 100' : ''}, ${lectura}. Abrir detalle`);
   }
 
   function trackHistory(e) {
@@ -250,6 +255,20 @@
     </svg>`;
   }
 
+  function paintIa(a, hist) {
+    const box = $('#dIa'), v = a.anomalia, lvl = !a.conectado ? 'offline' : IA_NIVEL[a.anomalia_nivel] || 'bajo';
+    box.dataset.lvl = lvl;
+    tween($('#dIaVal'), v);
+    $('#dIaBar').style.width = (v ?? 0) + '%';
+    $('#dIaLvl').textContent = v == null ? 'El modelo se está entrenando…' : { alta: 'Anomalía alta', moderada: 'Anomalía moderada', normal: 'Comportamiento normal' }[a.anomalia_nivel];
+    $('#dIaNote').textContent = v == null ? '' : v >= 70
+      ? 'La combinación de CPU, RAM y disco se aleja mucho de lo que la IA aprendió como normal.'
+      : v >= 40 ? 'Hay señales de desvío frente a lo habitual: conviene vigilar el equipo.' : 'El uso se parece a lo que la IA considera normal.';
+    const serie = hist.map(p => p.anomalia);
+    $('#chIa').innerHTML = serie.some(x => x == null) ? '' : chart('ia', serie, { min: 0, max: 100, thr: 70, guia: 'Anomalía alta desde 70', unit: '', label: 'Índice de anomalía de la IA', lvl: lvl === 'offline' ? 'offline' : lvl });
+    if (st.ia) $('#dIaSrc').textContent = st.ia.disponible ? `${st.ia.algoritmo} · datos ${st.ia.fuente}` : '';
+  }
+
   function paintDrawer(name, d) {
     const a = d.actual, r = estado(a);
     $('#dTitle').textContent = name;
@@ -278,6 +297,13 @@
     $('#dTempChartTitle').textContent = tituloTemp + ' en las últimas mediciones';
     $('#chCpu').innerHTML = chart('cpu', cpuV, { min: 0, max: 100, thr: 90, guia: 'Uso alto de CPU desde 90 %', unit: '%', label: 'CPU', lvl: level('cpu', a.cpu) });
     $('#chTemp').innerHTML = chart('temp', tV, { min: 30, max: 110, thr: incluyeEstimadas ? null : 80, guia: 'Temperatura alta desde 80 °C', unit: '°C', label: tituloTemp, lvl: incluyeEstimadas ? 'offline' : level('temp', a.temperatura) });
+    paintIa(a, hist);
+    const procs = a.procesos || [];
+    $('#dProcsBox').hidden = !procs.length;
+    $('#dProcs').replaceChildren(...procs.map(p => {
+      const li = document.createElement('li'), n = document.createElement('b'), v = document.createElement('span');
+      n.textContent = p.nombre; v.textContent = `${mem(p.ram_mb)} · ${p.cpu} % CPU`; li.append(n, v); return li;
+    }));
     $('#dFree').textContent = `Espacio libre en disco: ${a.espacio_libre} GB`;
     $('#dUptime').textContent = a.uptime_segundos == null ? 'Tiempo encendido sin datos' : `Tiempo encendido al medir: ${duracion(a.uptime_segundos)}`;
     $('#dWhen').textContent = `${ultimaMedicion(a)} (${a.fecha})`;
@@ -304,7 +330,7 @@
   $('#dClose').addEventListener('click', closeDrawer);
   scrim.addEventListener('click', closeDrawer);
   document.addEventListener('keydown', e => {
-    if (!st.sel) return;
+    if (!st.sel || e.target.closest('#chat, #chatBtn')) return;
     if (e.key === 'Escape') { closeDrawer(); return; }
     if (e.key === 'Tab') {
       const f = $$('button, [href], summary', drawer).filter(el => !el.disabled);
@@ -353,6 +379,57 @@
   $('#demoStart').addEventListener('click', () => cambiarDemo('fallo'));
   $('#demoReset').addEventListener('click', () => cambiarDemo('reset'));
   j('/api/config').then(config => { $('#demoControls').hidden = !config.demo; }).catch(() => {});
+
+  /* Estado de la IA */
+  async function cargarIa() {
+    try {
+      st.ia = await j('/api/ia');
+      const pill = $('#iaPill');
+      pill.hidden = false;
+      pill.dataset.state = st.ia.disponible ? 'ready' : 'training';
+      pill.textContent = st.ia.disponible ? 'IA activa' : 'IA entrenando…';
+      pill.title = st.ia.disponible ? `${st.ia.algoritmo}. Entrenado con datos ${st.ia.fuente} (${st.ia.n_reales} reales, ${st.ia.n_simuladas} simulados).` : '';
+    } catch { /* la IA es un complemento: el dashboard sigue sin ella */ }
+  }
+  cargarIa(); setInterval(cargarIa, 30000);
+
+  /* Asistente */
+  const chat = $('#chat'), chatBtn = $('#chatBtn'), log = $('#chatLog'), input = $('#chatInput');
+  const INICIALES = ['¿Cuál equipo está peor?', 'Resumen del laboratorio', '¿Por qué está alta la RAM?', '¿Cómo funciona la IA?'];
+  function mensaje(texto, quien) {
+    const m = document.createElement('div');
+    m.className = 'msg ' + quien; m.textContent = texto;
+    log.append(m);
+    // Las respuestas largas se leen desde el principio; lo demás baja hasta el final
+    if (quien === 'bot') m.scrollIntoView({ block: 'start' }); else log.scrollTop = log.scrollHeight;
+    return m;
+  }
+  function chips(lista) {
+    $('#chatChips').replaceChildren(...lista.slice(0, 3).map(t => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = t;
+      b.addEventListener('click', () => preguntar(t)); return b;
+    }));
+  }
+  async function preguntar(texto) {
+    texto = (texto || '').trim(); if (!texto) return;
+    mensaje(texto, 'user'); input.value = '';
+    const espera = mensaje('Pensando…', 'bot typing');
+    try {
+      const r = await j('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pregunta: texto }) });
+      espera.remove(); mensaje(r.respuesta, 'bot'); chips(r.sugerencias || INICIALES);
+    } catch { espera.remove(); mensaje('No pude consultar al servidor. Inténtalo de nuevo en unos segundos.', 'bot'); }
+  }
+  function abrirChat(abrir) {
+    chat.hidden = !abrir; chatBtn.hidden = abrir; chatBtn.setAttribute('aria-expanded', String(abrir));
+    if (abrir) {
+      if (!log.children.length) { mensaje('Hola, soy el asistente de NextMaint. Respondo con los datos reales de tus equipos y con el análisis de la IA. ¿Qué quieres saber?', 'bot'); chips(INICIALES); }
+      input.focus();
+    } else chatBtn.focus();
+  }
+  chatBtn.addEventListener('click', () => abrirChat(true));
+  $('#chatClose').addEventListener('click', () => abrirChat(false));
+  chat.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); abrirChat(false); } });
+  $('#chatForm').addEventListener('submit', e => { e.preventDefault(); preguntar(input.value); });
 
   /* Ciclo de actualización */
   let timer = null, busy = false;

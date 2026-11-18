@@ -4,3 +4,4 @@ psutil
 httpx
 SQLAlchemy
 tzdata
+scikit-learn

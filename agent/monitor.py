@@ -28,8 +28,44 @@ def leer_temperatura(cpu: float) -> tuple[float, bool]:
     return round(40 + cpu * 0.4 + random.uniform(-2, 2), 1), False
 
 
+IGNORAR = {"system idle process", "idle", "system", "registry", "memory compression"}
+
+
+def _preparar_procesos() -> list:
+    """Lista los procesos y arranca su medición de CPU (la lectura útil llega 1 s después)."""
+    procesos = []
+    for p in psutil.process_iter():
+        try:
+            p.cpu_percent(None)
+            procesos.append(p)
+        except psutil.Error:
+            pass
+    return procesos
+
+
+def _top_procesos(procesos: list) -> list[dict]:
+    """Los programas que más memoria y CPU usan, agrupados por nombre (Chrome tiene muchos procesos)."""
+    nucleos = psutil.cpu_count() or 1
+    grupos: dict[str, list[float]] = {}
+    for p in procesos:
+        try:
+            nombre = p.name()
+            if nombre.lower() in IGNORAR:
+                continue
+            g = grupos.setdefault(nombre, [0.0, 0.0])
+            g[0] += p.cpu_percent(None) / nucleos
+            g[1] += p.memory_info().rss / 1024**2
+        except psutil.Error:
+            continue
+    lista = [{"nombre": n[:60], "cpu": round(min(c, 100.0), 1), "ram_mb": round(m)} for n, (c, m) in grupos.items()]
+    por_ram = sorted(lista, key=lambda x: -x["ram_mb"])[:3]
+    por_cpu = [x for x in sorted(lista, key=lambda x: -x["cpu"])[:3] if x["cpu"] > 0 and x not in por_ram]
+    return (por_ram + por_cpu)[:6]
+
+
 def medir(nombre: str) -> dict:
     disco = psutil.disk_usage("C:\\" if platform.system() == "Windows" else "/")
+    procesos = _preparar_procesos()
     cpu = psutil.cpu_percent(interval=1)
     temp, es_real = leer_temperatura(cpu)
     return {
@@ -41,6 +77,7 @@ def medir(nombre: str) -> dict:
         "temperatura_estimada": not es_real,  # el dashboard la rotula y no la usa para el riesgo
         "espacio_libre": round(disco.free / 1024**3, 1),
         "uptime_segundos": max(0, int(time.time() - psutil.boot_time())),
+        "procesos": _top_procesos(procesos),  # para que el asistente diga qué programa consume
     }
 
 
@@ -57,7 +94,7 @@ def main() -> None:
         datos = medir(args.nombre)
         print(json.dumps(datos, ensure_ascii=False))
         try:
-            r = httpx.post(f"{args.url}/api/mediciones", json=datos, headers=cabeceras, timeout=15)
+            r = httpx.post(f"{args.url}/api/mediciones", json=datos, headers=cabeceras, timeout=5)
             if r.status_code == 401:
                 print("  (el servidor rechazó la clave: revisa --clave)")
             elif r.status_code >= 400:

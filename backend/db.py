@@ -58,6 +58,7 @@ mediciones = Table(
     # True cuando el equipo no tiene sensor legible y la temperatura se calculó a partir de la CPU
     Column("temp_estimada", Boolean, nullable=False, default=False, server_default=false()),
     Column("uptime_segundos", Integer),
+    Column("procesos", Text),  # JSON: los procesos que más consumen en ese momento
     Index("ix_mediciones_equipo_id", "equipo_id", "id"),
 )
 
@@ -86,6 +87,8 @@ def _migrar() -> None:
             conn.execute(text(f"ALTER TABLE mediciones ADD COLUMN temp_estimada {tipo}"))
         if "uptime_segundos" not in columnas:
             conn.execute(text("ALTER TABLE mediciones ADD COLUMN uptime_segundos INTEGER"))
+        if "procesos" not in columnas:
+            conn.execute(text("ALTER TABLE mediciones ADD COLUMN procesos TEXT"))
 
 
 def ahora() -> str:

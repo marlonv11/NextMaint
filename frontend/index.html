@@ -31,6 +31,7 @@
       NextMaint
     </div>
     <div class="status">
+      <span class="ia-pill" id="iaPill" hidden></span>
       <div class="live" id="live" data-state="off"><span class="pulse"></span><span id="liveText">Conectando…</span></div>
       <time id="clock"></time>
     </div>
@@ -110,6 +111,21 @@
     <div class="g" data-k="disco"><div class="ringwrap"></div><span class="gl">Disco</span></div>
   </div>
 
+  <section class="ia-box" id="dIa" data-lvl="bajo" aria-label="Análisis de la IA">
+    <div class="ia-head"><h3>Análisis de la IA</h3><span class="ia-src" id="dIaSrc"></span></div>
+    <div class="ia-main">
+      <p class="ia-num"><b id="dIaVal">–</b><span>/100</span></p>
+      <div class="ia-text"><p class="ia-lvl" id="dIaLvl">Calculando…</p><div class="ia-bar"><i id="dIaBar"></i></div></div>
+    </div>
+    <p class="ia-note" id="dIaNote"></p>
+    <div id="chIa"></div>
+  </section>
+
+  <section class="procs" id="dProcsBox" hidden>
+    <h3>Programas que más consumen</h3>
+    <ul id="dProcs"></ul>
+  </section>
+
   <div class="thermo" id="dThermo">
     <h3 id="dTempTitle">Temperatura</h3>
     <div class="scale"><span class="mark" id="mark"><span class="mark-v" id="markV">0 °C</span></span></div>
@@ -121,6 +137,23 @@
 
   <p class="meta"><span id="dFree"></span><span id="dUptime"></span><span id="dWhen"></span></p>
 </aside>
+
+<button class="chat-btn" id="chatBtn" type="button" aria-expanded="false" aria-controls="chat">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.5 9.5h7M8.5 12.5h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  Asistente IA
+</button>
+<section class="chat" id="chat" aria-label="Asistente" hidden>
+  <header class="chat-head">
+    <div><h2>Asistente NextMaint</h2><p>Responde con los datos reales del laboratorio</p></div>
+    <button class="x" id="chatClose" type="button" aria-label="Cerrar asistente"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2l12 12M14 2L2 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+  </header>
+  <div class="chat-log" id="chatLog" role="log" aria-live="polite"></div>
+  <div class="chat-chips" id="chatChips"></div>
+  <form class="chat-form" id="chatForm" autocomplete="off">
+    <input id="chatInput" type="text" maxlength="300" placeholder="Pregunta, por ejemplo: ¿por qué está alta la RAM?" aria-label="Escribe tu pregunta">
+    <button class="btn send" type="submit">Enviar</button>
+  </form>
+</section>
 
 <script src="/static/js/app.js" defer></script>
 </body>

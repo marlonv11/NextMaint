@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import secrets
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from . import risk
+from . import chat, ia, risk
 from .db import ZONA, ahora, asegurar_equipo, borrar_equipo, engine, init_db, limpiar_antiguas
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -49,6 +50,13 @@ def exigir_contrasena(creds: HTTPBasicCredentials | None = Depends(basic)) -> No
 app = FastAPI(title="NexMaint")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")  # css/ y js/
 init_db()
+ia.iniciar(engine)  # entrena el modelo de IA en segundo plano (no bloquea el arranque)
+
+
+class Proceso(BaseModel):
+    nombre: str = Field(min_length=1, max_length=60)
+    cpu: float = Field(default=0, ge=0, le=1000)
+    ram_mb: float = Field(default=0, ge=0, le=10_000_000)
 
 
 class Medicion(BaseModel):
@@ -61,6 +69,7 @@ class Medicion(BaseModel):
     # True si el equipo no tiene sensor legible y la temperatura se calculó a partir de la CPU
     temperatura_estimada: bool = False
     uptime_segundos: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    procesos: list[Proceso] | None = Field(default=None, max_length=8)
 
 
 def _conexion(fecha: str | None) -> tuple[bool, int | None]:
@@ -87,11 +96,12 @@ def registrar_medicion(m: Medicion) -> dict:
         conn.execute(
             text(
                 "INSERT INTO mediciones "
-                "(equipo_id, cpu, ram, disco, temperatura, espacio_libre, fecha, temp_estimada, uptime_segundos) "
-                "VALUES (:eq, :cpu, :ram, :disco, :temp, :libre, :fecha, :est, :uptime)"
+                "(equipo_id, cpu, ram, disco, temperatura, espacio_libre, fecha, temp_estimada, uptime_segundos, procesos) "
+                "VALUES (:eq, :cpu, :ram, :disco, :temp, :libre, :fecha, :est, :uptime, :proc)"
             ),
             {"eq": equipo.id, "cpu": m.cpu, "ram": m.ram, "disco": m.disco, "temp": m.temperatura,
-             "libre": m.espacio_libre, "fecha": fecha, "est": m.temperatura_estimada, "uptime": m.uptime_segundos},
+             "libre": m.espacio_libre, "fecha": fecha, "est": m.temperatura_estimada, "uptime": m.uptime_segundos,
+             "proc": json.dumps([p.model_dump() for p in m.procesos], ensure_ascii=False) if m.procesos else None},
         )
         # Alerta solo cuando el riesgo cambia a medio/alto (evita duplicados)
         if resultado["nivel"] != "bajo" and resultado["nivel"] != equipo.estado:
@@ -129,6 +139,10 @@ def _con_estado(d: dict) -> dict:
     """Agrega riesgo y conexión a una fila con la última medición de un equipo."""
     d["temp_estimada"] = bool(d.get("temp_estimada"))
     d["conectado"], d["segundos_sin_datos"] = _conexion(d.get("fecha"))
+    try:
+        d["procesos"] = json.loads(d["procesos"]) if d.get("procesos") else []
+    except (TypeError, ValueError):
+        d["procesos"] = []
     if d.get("cpu") is not None:
         d.update(risk.evaluar(d["cpu"], d["ram"], d["disco"], d["temperatura"], d["temp_estimada"]))
     else:
@@ -136,14 +150,20 @@ def _con_estado(d: dict) -> dict:
     return d
 
 
-@app.get("/api/equipos", dependencies=[Depends(exigir_contrasena)])
-def listar_equipos():
+def _con_ia(filas: list[dict]) -> list[dict]:
+    """Agrega el índice de anomalía de la IA (0-100) a cada fila; None si el modelo aún no está listo."""
+    for d, p in zip(filas, ia.puntuar([(d.get("cpu"), d.get("ram"), d.get("disco")) for d in filas])):
+        d["anomalia"], d["anomalia_nivel"] = p, ia.nivel(p)
+    return filas
+
+
+def _equipos_con_estado() -> list[dict]:
     with engine.connect() as conn:
         filas = conn.execute(
             text(
                 """
                 SELECT e.id, e.nombre, e.ubicacion, m.cpu, m.ram, m.disco, m.temperatura,
-                       m.espacio_libre, m.fecha, m.temp_estimada, m.uptime_segundos
+                       m.espacio_libre, m.fecha, m.temp_estimada, m.uptime_segundos, m.procesos
                 FROM equipos e
                 LEFT JOIN mediciones m ON m.id = (
                     SELECT id FROM mediciones WHERE equipo_id = e.id ORDER BY id DESC LIMIT 1
@@ -152,7 +172,12 @@ def listar_equipos():
                 """
             )
         ).mappings().all()
-    return [_con_estado(dict(f)) for f in filas]
+    return _con_ia([_con_estado(dict(f)) for f in filas])
+
+
+@app.get("/api/equipos", dependencies=[Depends(exigir_contrasena)])
+def listar_equipos():
+    return _equipos_con_estado()
 
 
 @app.get("/api/equipos/{nombre}", dependencies=[Depends(exigir_contrasena)])
@@ -163,7 +188,7 @@ def detalle_equipo(nombre: str):
             raise HTTPException(404, "Equipo no encontrado")
         historial = conn.execute(
             text(
-                "SELECT cpu, ram, disco, temperatura, espacio_libre, fecha, temp_estimada, uptime_segundos "
+                "SELECT cpu, ram, disco, temperatura, espacio_libre, fecha, temp_estimada, uptime_segundos, procesos "
                 "FROM mediciones "
                 "WHERE equipo_id = :id ORDER BY id DESC LIMIT 60"
             ),
@@ -178,10 +203,16 @@ def detalle_equipo(nombre: str):
         ).mappings().all()
     if not historial:
         raise HTTPException(404, "Sin mediciones")
+    actual = _con_ia([_con_estado(dict(historial[0]))])[0]
+    serie = list(reversed(historial))
+    puntos = ia.puntuar([(h["cpu"], h["ram"], h["disco"]) for h in serie])
     return {
         "equipo": dict(eq),
-        "actual": _con_estado(dict(historial[0])),
-        "historial": [{**dict(h), "temp_estimada": bool(h["temp_estimada"])} for h in reversed(historial)],
+        "actual": actual,
+        "historial": [
+            {**{k: v for k, v in dict(h).items() if k != "procesos"}, "temp_estimada": bool(h["temp_estimada"]), "anomalia": p}
+            for h, p in zip(serie, puntos)
+        ],
         "alertas": [dict(a) for a in alertas],
     }
 
@@ -203,6 +234,29 @@ def resolver_alerta(alerta_id: int):
     with engine.begin() as conn:
         conn.execute(text("UPDATE alertas SET estado = 'resuelta' WHERE id = :id"), {"id": alerta_id})
     return {"ok": True}
+
+
+class Pregunta(BaseModel):
+    pregunta: str = Field(min_length=1, max_length=300)
+
+
+@app.get("/api/ia", dependencies=[Depends(exigir_contrasena)])
+def estado_ia():
+    """Datos del modelo de IA: algoritmo, con qué datos se entrenó y cuándo."""
+    return ia.info()
+
+
+@app.post("/api/chat", dependencies=[Depends(exigir_contrasena)])
+def conversar(p: Pregunta):
+    """Asistente: responde con los datos reales de los equipos y el índice de anomalía de la IA."""
+    with engine.connect() as conn:
+        alertas = conn.execute(
+            text(
+                "SELECT e.nombre AS equipo, a.riesgo, a.mensaje FROM alertas a "
+                "JOIN equipos e ON e.id = a.equipo_id WHERE a.estado = 'activa' ORDER BY a.id DESC LIMIT 20"
+            )
+        ).mappings().all()
+    return chat.responder(p.pregunta, _equipos_con_estado(), [dict(a) for a in alertas], ia.info())
 
 
 # ---------------------------------------------------------------- Modo demostración
