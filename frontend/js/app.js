@@ -187,6 +187,8 @@
     $('#sumTxt').textContent = txt;
     $('#sumLine').dataset.risk = worst;
     $('#sumIc').setAttribute('href', '#i-' + worst);
+    $('#purgeBtn').hidden = c.offline === 0;
+    $('#purgeBtn').textContent = c.offline === 1 ? 'Quitar el equipo sin conexión' : `Quitar ${c.offline} equipos sin conexión`;
     $('#stack').setAttribute('aria-label', `${c.bajo} equipos en riesgo bajo, ${c.medio} en medio, ${c.alto} en alto y ${c.offline} sin conexión`);
   }
 
@@ -307,6 +309,7 @@
     $('#dFree').textContent = `Espacio libre en disco: ${a.espacio_libre} GB`;
     $('#dUptime').textContent = a.uptime_segundos == null ? 'Tiempo encendido sin datos' : `Tiempo encendido al medir: ${duracion(a.uptime_segundos)}`;
     $('#dWhen').textContent = `${ultimaMedicion(a)} (${a.fecha})`;
+    $('#dRemove').hidden = a.conectado;  // solo se puede quitar un equipo que no está enviando datos
   }
 
   async function refreshDrawer() {
@@ -328,6 +331,14 @@
     st.trigger && st.trigger.isConnected && st.trigger.focus();
   }
   $('#dClose').addEventListener('click', closeDrawer);
+  $('#dRemove').addEventListener('click', async () => {
+    const name = st.sel; if (!name) return;
+    if (!confirm(`¿Quitar ${name}? Se borran también sus mediciones y alertas.`)) return;
+    $('#dRemove').disabled = true;
+    try { await j('/api/equipos/' + encodeURIComponent(name), { method: 'DELETE' }); closeDrawer(); st.alertSig = null; await poll(); }
+    catch { alert('No se pudo quitar el equipo. Inténtalo de nuevo.'); }
+    finally { $('#dRemove').disabled = false; }
+  });
   scrim.addEventListener('click', closeDrawer);
   document.addEventListener('keydown', e => {
     if (!st.sel || e.target.closest('#chat, #chatBtn')) return;
@@ -379,6 +390,16 @@
   $('#demoStart').addEventListener('click', () => cambiarDemo('fallo'));
   $('#demoReset').addEventListener('click', () => cambiarDemo('reset'));
   j('/api/config').then(config => { $('#demoControls').hidden = !config.demo; }).catch(() => {});
+
+  /* Quitar equipos que ya no existen (pruebas viejas, PCs dados de baja) */
+  $('#purgeBtn').addEventListener('click', async () => {
+    const n = $$('.pc[data-risk="offline"]').length;
+    if (!confirm(`¿Quitar ${n === 1 ? 'el equipo sin conexión' : n + ' equipos sin conexión'}? Se borran también sus mediciones y alertas.`)) return;
+    $('#purgeBtn').disabled = true;
+    try { await j('/api/equipos/limpiar-sin-conexion', { method: 'POST' }); st.alertSig = null; await poll(); }
+    catch { alert('No se pudo quitar. Inténtalo de nuevo.'); }
+    finally { $('#purgeBtn').disabled = false; }
+  });
 
   /* Estado de la IA */
   async function cargarIa() {

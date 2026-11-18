@@ -5,6 +5,7 @@
 - DATABASE_URL=postgresql://...  -> PostgreSQL (Render la define automáticamente).
 - NEXMAINT_TZ           -> zona horaria de las fechas guardadas (por defecto America/Bogota).
 - NEXMAINT_RETENCION_DIAS -> días de mediciones que se conservan (por defecto 14).
+- NEXMAINT_OLVIDAR_DIAS  -> días sin datos tras los cuales un equipo se borra solo (por defecto 7; 0 = nunca).
 """
 import os
 from datetime import datetime, timedelta
@@ -19,6 +20,8 @@ from sqlalchemy.exc import IntegrityError
 
 ZONA = ZoneInfo(os.environ.get("NEXMAINT_TZ", "America/Bogota"))
 RETENCION_DIAS = int(os.environ.get("NEXMAINT_RETENCION_DIAS", "14"))
+# Un equipo sin enviar datos durante estos días se borra solo (0 = nunca). Ojo: un fin de semana largo son 3-4 días.
+OLVIDAR_DIAS = int(os.environ.get("NEXMAINT_OLVIDAR_DIAS", "7"))
 
 
 def _url() -> str:
@@ -123,3 +126,20 @@ def limpiar_antiguas(conn) -> None:
     """Borra mediciones más viejas que RETENCION_DIAS para no llenar la base de datos."""
     limite = (datetime.now(ZONA) - timedelta(days=RETENCION_DIAS)).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(text("DELETE FROM mediciones WHERE fecha < :limite"), {"limite": limite})
+
+
+def olvidar_inactivos(dias: int) -> list[str]:
+    """Borra los equipos cuya última medición es más vieja que `dias` días. Devuelve sus nombres."""
+    limite = (datetime.now(ZONA) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    with engine.connect() as conn:
+        filas = conn.execute(
+            text(
+                "SELECT e.nombre FROM equipos e "
+                "WHERE (SELECT MAX(m.fecha) FROM mediciones m WHERE m.equipo_id = e.id) < :limite"
+            ),
+            {"limite": limite},
+        ).all()
+    nombres = [f.nombre for f in filas]
+    for nombre in nombres:
+        borrar_equipo(nombre)
+    return nombres

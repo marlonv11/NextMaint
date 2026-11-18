@@ -63,6 +63,7 @@
         <li data-r="alto"><svg class="ic" aria-hidden="true"><use href="#i-alto"/></svg><b id="n-alto">0</b>Alto</li>
         <li data-r="offline"><svg class="ic" aria-hidden="true"><use href="#i-offline"/></svg><b id="n-offline">0</b>Sin conexión</li>
       </ul>
+      <button class="btn quiet" id="purgeBtn" type="button" hidden>Quitar equipos sin conexión</button>
     </div>
   </section>
 
@@ -136,6 +137,7 @@
   <figure class="chart"><figcaption id="dTempChartTitle">Temperatura en las últimas mediciones</figcaption><div id="chTemp"></div></figure>
 
   <p class="meta"><span id="dFree"></span><span id="dUptime"></span><span id="dWhen"></span></p>
+  <button class="btn danger" id="dRemove" type="button" hidden>Quitar este equipo</button>
 </aside>
 
 <button class="chat-btn" id="chatBtn" type="button" aria-expanded="false" aria-controls="chat">

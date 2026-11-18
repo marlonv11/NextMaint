@@ -258,3 +258,7 @@ details.resolved summary { cursor: pointer; font-size: 14px; color: var(--muted)
 .btn.send { background: var(--bajo); color: var(--deep); border-color: transparent; font-weight: 600; }
 .btn.send:hover { background: #5bf0d6; }
 @media (max-width: 520px) { .chat { right: 12px; bottom: 12px; } .chat-btn { right: 14px; bottom: 14px; } .ia-pill { display: none; } }
+
+.btn.danger { margin-top: 22px; border-color: color-mix(in srgb, var(--alto) 60%, transparent); color: #ffd5e2; }
+.btn.danger:hover { background: color-mix(in srgb, var(--alto) 18%, transparent); border-color: var(--alto); }
+.btn.danger[hidden] { display: none; }

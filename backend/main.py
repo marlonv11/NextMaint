@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from . import chat, ia, risk
-from .db import ZONA, ahora, asegurar_equipo, borrar_equipo, engine, init_db, limpiar_antiguas
+from .db import OLVIDAR_DIAS, ZONA, ahora, asegurar_equipo, borrar_equipo, engine, init_db, limpiar_antiguas, olvidar_inactivos
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -51,6 +51,19 @@ app = FastAPI(title="NexMaint")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")  # css/ y js/
 init_db()
 ia.iniciar(engine)  # entrena el modelo de IA en segundo plano (no bloquea el arranque)
+
+
+def _ciclo_olvidar() -> None:
+    """Cada hora borra los equipos que llevan más de OLVIDAR_DIAS días sin enviar datos."""
+    while OLVIDAR_DIAS > 0:
+        try:
+            olvidar_inactivos(OLVIDAR_DIAS)
+        except Exception:  # la limpieza nunca debe tumbar el servidor
+            pass
+        time.sleep(3600)
+
+
+threading.Thread(target=_ciclo_olvidar, daemon=True, name="olvidar-equipos").start()
 
 
 class Proceso(BaseModel):
@@ -215,6 +228,22 @@ def detalle_equipo(nombre: str):
         ],
         "alertas": [dict(a) for a in alertas],
     }
+
+
+@app.delete("/api/equipos/{nombre}", dependencies=[Depends(exigir_contrasena)])
+def quitar_equipo(nombre: str):
+    """Borra un equipo con todas sus mediciones y alertas."""
+    borrar_equipo(nombre)
+    return {"ok": True}
+
+
+@app.post("/api/equipos/limpiar-sin-conexion", dependencies=[Depends(exigir_contrasena)])
+def quitar_sin_conexion():
+    """Borra todos los equipos que ahora mismo no envían datos."""
+    quitados = [e["nombre"] for e in _equipos_con_estado() if not e["conectado"]]
+    for nombre in quitados:
+        borrar_equipo(nombre)
+    return {"ok": True, "quitados": quitados}
 
 
 @app.get("/api/alertas", dependencies=[Depends(exigir_contrasena)])
