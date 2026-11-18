@@ -8,16 +8,34 @@
   const level = (k, v) => v >= TH[k][1] ? 'alto' : v >= TH[k][0] ? 'medio' : 'bajo';
   const LABEL = { bajo: 'Bajo', medio: 'Medio', alto: 'Alto' };
   const safeR = r => (r in LABEL ? r : 'bajo');
+  const estado = e => e.conectado ? safeR(e.nivel) : 'offline';
+  const etiqueta = r => r === 'offline' ? 'Sin conexión' : 'Riesgo ' + LABEL[r].toLowerCase();
+  const ESTADOS = ['bajo', 'medio', 'alto', 'offline'];
   const CIRC = 2 * Math.PI * 42;
   const POLL_MS = 2000, HIST_MAX = 30;
-  const NOMBRE_DEMO = 'PC-DEMO';
-  const ago = s => s == null ? 'sin datos' : s < 60 ? `hace ${s} s` : s < 3600 ? `hace ${Math.floor(s / 60)} min`
-    : s < 86400 ? `hace ${Math.floor(s / 3600)} h` : `hace ${Math.floor(s / 86400)} d`;
+  const IA_NIVEL = { alta: 'alto', moderada: 'medio', normal: 'bajo' };
+  const mem = mb => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
 
-  const st = { tiles: new Map(), hist: new Map(), seenAlerts: null, alertSig: '', sel: null, trigger: null,
-               lastChange: Date.now(), ok: false, first: true, demo: false };
+  const st = { tiles: new Map(), hist: new Map(), seenAlerts: null, alertSig: null, sel: null, trigger: null,
+               lastChange: Date.now(), ok: false, first: true, conectado: false, demoBusy: false };
 
-  const j = async (url, opts) => { const r = await fetch(url, opts); if (!r.ok) throw new Error(r.status); return r.json(); };
+  const j = async (url, opts) => { const r = await fetch(url, { cache: 'no-store', ...opts }); if (!r.ok) throw new Error(r.status); return r.json(); };
+
+  function duracion(segundos) {
+    if (segundos < 60) return segundos + ' s';
+    const partes = [];
+    const dias = Math.floor(segundos / 86400), horas = Math.floor(segundos / 3600) % 24, minutos = Math.floor(segundos / 60) % 60;
+    if (dias) partes.push(dias + ' d');
+    if (horas) partes.push(horas + ' h');
+    if (minutos) partes.push(minutos + ' min');
+    return partes.join(' ');
+  }
+
+  function ultimaMedicion(e) {
+    if (e.segundos_sin_datos == null) return 'Sin mediciones';
+    const texto = e.conectado ? 'Actualizado' : 'Última lectura';
+    return texto + ' hace ' + duracion(e.segundos_sin_datos);
+  }
 
   /* Números que cuentan hasta su valor */
   function tween(el, to, dec = 0) {
@@ -66,11 +84,11 @@
           <span class="stats">
             <span class="stat" data-k="ram"><span>RAM</span><span class="bar"><i></i></span><span class="num"><b class="nv" data-v="0">0</b>%</span></span>
             <span class="stat" data-k="disco"><span>Disco</span><span class="bar"><i></i></span><span class="num"><b class="nv" data-v="0">0</b>%</span></span>
-            <span class="stat temp" data-level="bajo"><b class="v-temp" data-v="0">0</b><span>°C</span><span class="est" hidden>estimada</span></span>
+            <span class="stat temp" data-level="bajo"><b class="v-temp" data-v="0">0</b><span>°C</span><small class="temp-source" hidden>Estimada</small></span>
           </span>
         </span>
         <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path class="sa"/><path class="sl"/></svg>
-        <span class="ago"></span>
+        <span class="reading"><span class="rd"></span><span class="ia" hidden></span></span>
       </span>
       <span class="stand"></span><span class="base"></span>`;
     $('.name', b).textContent = name;
@@ -80,30 +98,29 @@
   }
 
   function updateTile(tile, e) {
-    // Un equipo "sin conexión" conserva sus últimos valores, pero se muestra apagado y sin nivel de riesgo.
-    const on = !!e.conectado, risk = on ? safeR(e.nivel) : 'off', t = e.temperatura, est = !!e.temp_estimada;
-    tile.dataset.risk = safeR(e.nivel);
-    tile.dataset.conn = on ? 'on' : 'off';
-    tile.style.setProperty('--heat', on ? clamp(((t ?? 40) - 40) / 50, 0, 1).toFixed(2) : '0');
-    $('.tagtxt', tile).textContent = on ? 'Riesgo ' + LABEL[risk].toLowerCase() : 'Sin conexión';
+    const risk = estado(e), t = e.temperatura;
+    tile.dataset.risk = risk;
+    tile.style.setProperty('--heat', e.conectado && !e.temp_estimada ? clamp(((t ?? 40) - 40) / 50, 0, 1).toFixed(2) : '0');
+    $('.tagtxt', tile).textContent = etiqueta(risk);
     $('.tag use', tile).setAttribute('href', '#i-' + risk);
-    $('.ago', tile).textContent = on ? '' : 'Sin datos ' + ago(e.segundos_sin_datos);
     const cpu = e.cpu ?? 0;
-    setRing($('.ring', tile), cpu, on ? level('cpu', cpu) : 'off');
+    setRing($('.ring', tile), cpu, e.conectado ? level('cpu', cpu) : 'offline');
     tween($('.v-cpu', tile), e.cpu);
     for (const k of ['ram', 'disco']) {
       const s = $(`.stat[data-k="${k}"]`, tile), v = e[k] ?? 0, bar = $('i', s);
       bar.style.width = clamp(v, 0, 100) + '%';
-      bar.style.background = `var(--${on ? level(k, v) : 'off'})`;
+      bar.style.background = `var(--${e.conectado ? level(k, v) : 'offline'})`;
       tween($('.nv', s), e[k]);
     }
     tween($('.v-temp', tile), t);
-    $('.est', tile).hidden = !est;
-    // La temperatura estimada no se resalta como alerta: no es una medición
-    $('.stat.temp', tile).dataset.level = on && !est ? level('temp', t ?? 0) : 'bajo';
-    tile.setAttribute('aria-label', on
-      ? `${e.nombre}, riesgo ${LABEL[risk].toLowerCase()}, CPU ${e.cpu ?? 'sin dato'} por ciento, temperatura ${est ? 'estimada ' : ''}${t ?? 'sin dato'} grados. Abrir detalle`
-      : `${e.nombre}, sin conexión, sin datos ${ago(e.segundos_sin_datos)}. Abrir detalle`);
+    $('.stat.temp', tile).dataset.level = e.temp_estimada || !e.conectado ? 'bajo' : level('temp', t ?? 0);
+    $('.temp-source', tile).hidden = !e.temp_estimada;
+    const lectura = ultimaMedicion(e);
+    $('.rd', tile).textContent = lectura;
+    const ia = $('.ia', tile), hayIa = e.conectado && e.anomalia != null;
+    ia.hidden = !hayIa;
+    if (hayIa) { ia.textContent = 'IA ' + e.anomalia + '/100'; ia.dataset.lvl = IA_NIVEL[e.anomalia_nivel] || 'bajo'; ia.title = 'Índice de anomalía de la IA: ' + e.anomalia_nivel; }
+    tile.setAttribute('aria-label', `${e.nombre}, ${etiqueta(risk)}${hayIa ? ', anomalía IA ' + e.anomalia + ' de 100' : ''}, ${lectura}. Abrir detalle`);
   }
 
   function trackHistory(e) {
@@ -133,6 +150,14 @@
   function renderFloor(eq) {
     const floor = $('#floor');
     $('#empty').hidden = eq.length > 0;
+    const nombres = new Set(eq.map(e => e.nombre));
+    for (const [nombre, tile] of st.tiles) {
+      if (nombres.has(nombre)) continue;
+      if (st.sel === nombre) closeDrawer();
+      tile.remove();
+      st.tiles.delete(nombre);
+      st.hist.delete(nombre);
+    }
     let fresh = false;
     eq.forEach((e, i) => {
       let tile = st.tiles.get(e.nombre);
@@ -141,35 +166,28 @@
     });
     if (fresh) void floor.offsetWidth;
     eq.forEach(e => { const h = trackHistory(e); const tile = st.tiles.get(e.nombre); updateTile(tile, e); spark(tile, h.cpu); });
-    // Equipos que desaparecieron (por ejemplo, al quitar la demo)
-    const vivos = new Set(eq.map(e => e.nombre));
-    for (const [n, t] of st.tiles) if (!vivos.has(n)) { t.remove(); st.tiles.delete(n); st.hist.delete(n); }
-    if (st.sel && !vivos.has(st.sel)) closeDrawer();
+    $('#demoReset').disabled = st.demoBusy || !st.tiles.has('PC-DEMO');
   }
 
   /* Resumen */
   function renderSummary(eq) {
-    // Los equipos sin conexión no cuentan en el riesgo: se muestran aparte.
-    const c = { bajo: 0, medio: 0, alto: 0, off: 0 };
-    eq.forEach(e => c[e.conectado ? safeR(e.nivel) : 'off']++);
-    for (const r of ['bajo', 'medio', 'alto', 'off']) {
+    const c = { bajo: 0, medio: 0, alto: 0, offline: 0 };
+    eq.forEach(e => c[estado(e)]++);
+    for (const r of ESTADOS) {
       const seg = $('#seg-' + r);
       seg.style.flexGrow = c[r]; seg.classList.toggle('on', c[r] > 0);
       tween($('#n-' + r), c[r]);
     }
-    const names = r => eq.filter(e => (r === 'off' ? !e.conectado : e.conectado && e.nivel === r)).map(e => e.nombre).join(', ');
-    const conectados = eq.length - c.off;
-    let worst = 'bajo', txt;
+    const names = r => eq.filter(e => estado(e) === r).map(e => e.nombre).join(', ');
+    let worst = 'bajo', txt = 'Todos los equipos funcionan con normalidad.';
     if (!eq.length) txt = 'Esperando datos de los equipos…';
-    else if (!conectados) { worst = 'off'; txt = 'Ningún equipo está enviando datos.'; }
     else if (c.alto) { worst = 'alto'; txt = (c.alto === 1 ? 'Requiere mantenimiento: ' : 'Requieren mantenimiento: ') + names('alto') + '.'; }
     else if (c.medio) { worst = 'medio'; txt = 'Conviene revisar: ' + names('medio') + '.'; }
-    else txt = c.off ? 'Los equipos conectados funcionan con normalidad.' : 'Todos los equipos funcionan con normalidad.';
-    if (c.off && conectados) txt += ` Sin conexión: ${names('off')}.`;
+    else if (c.offline) { worst = 'offline'; txt = 'Sin conexión: ' + names('offline') + '.'; }
     $('#sumTxt').textContent = txt;
     $('#sumLine').dataset.risk = worst;
     $('#sumIc').setAttribute('href', '#i-' + worst);
-    $('#stack').setAttribute('aria-label', `${c.bajo} equipos en riesgo bajo, ${c.medio} en medio, ${c.alto} en alto, ${c.off} sin conexión`);
+    $('#stack').setAttribute('aria-label', `${c.bajo} equipos en riesgo bajo, ${c.medio} en medio, ${c.alto} en alto y ${c.offline} sin conexión`);
   }
 
   /* Alertas */
@@ -190,7 +208,7 @@
       b.type = 'button'; b.className = 'btn'; b.textContent = 'Marcar como resuelta';
       b.addEventListener('click', async () => {
         b.disabled = true;
-        try { await j(`/api/alertas/${a.id}/resolver`, { method: 'POST' }); await poll(true); } catch { b.disabled = false; }
+        try { await j(`/api/alertas/${a.id}/resolver`, { method: 'POST' }); await poll(); } catch { b.disabled = false; }
       });
       $('.al-act', li).append(b);
     } else { const s = document.createElement('span'); s.className = 'muted'; s.textContent = 'Resuelta'; $('.al-act', li).append(s); }
@@ -227,8 +245,9 @@
     return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label}: último valor ${last} ${o.unit}">
       <defs><linearGradient id="g-${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--${o.lvl});stop-opacity:.5"/><stop offset="1" style="stop-color:var(--${o.lvl});stop-opacity:0"/></linearGradient></defs>
       ${grid}
-      ${o.thr == null ? '' : `<line x1="${pl}" x2="${W - pr}" y1="${y(o.thr)}" y2="${y(o.thr)}" stroke="var(--alto)" stroke-width="1.4" stroke-dasharray="5 5"/>
-      <text x="${pl + 6}" y="${last >= o.thr ? y(o.thr) + 16 : y(o.thr) - 6}" style="fill:var(--text)">Riesgo alto desde ${o.thr} ${o.unit}</text>`}
+      ${o.thr == null ? '' : `
+        <line x1="${pl}" x2="${W - pr}" y1="${y(o.thr)}" y2="${y(o.thr)}" stroke="var(--alto)" stroke-width="1.4" stroke-dasharray="5 5"/>
+        <text x="${pl + 6}" y="${last >= o.thr ? y(o.thr) + 16 : y(o.thr) - 6}" style="fill:var(--text)">${o.guia}</text>`}
       <path d="${area}" fill="url(#g-${id})"/>
       <path d="${line}" fill="none" style="stroke:var(--${o.lvl})" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
       <circle class="dot-ping" cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="4.5" style="fill:var(--${o.lvl})"/>
@@ -236,45 +255,58 @@
     </svg>`;
   }
 
+  function paintIa(a, hist) {
+    const box = $('#dIa'), v = a.anomalia, lvl = !a.conectado ? 'offline' : IA_NIVEL[a.anomalia_nivel] || 'bajo';
+    box.dataset.lvl = lvl;
+    tween($('#dIaVal'), v);
+    $('#dIaBar').style.width = (v ?? 0) + '%';
+    $('#dIaLvl').textContent = v == null ? 'El modelo se está entrenando…' : { alta: 'Anomalía alta', moderada: 'Anomalía moderada', normal: 'Comportamiento normal' }[a.anomalia_nivel];
+    $('#dIaNote').textContent = v == null ? '' : v >= 70
+      ? 'La combinación de CPU, RAM y disco se aleja mucho de lo que la IA aprendió como normal.'
+      : v >= 40 ? 'Hay señales de desvío frente a lo habitual: conviene vigilar el equipo.' : 'El uso se parece a lo que la IA considera normal.';
+    const serie = hist.map(p => p.anomalia);
+    $('#chIa').innerHTML = serie.some(x => x == null) ? '' : chart('ia', serie, { min: 0, max: 100, thr: 70, guia: 'Anomalía alta desde 70', unit: '', label: 'Índice de anomalía de la IA', lvl: lvl === 'offline' ? 'offline' : lvl });
+    if (st.ia) $('#dIaSrc').textContent = st.ia.disponible ? `${st.ia.algoritmo} · datos ${st.ia.fuente}` : '';
+  }
+
   function paintDrawer(name, d) {
-    const a = d.actual, on = !!a.conectado, r = on ? safeR(a.nivel) : 'off', est = !!a.temp_estimada;
+    const a = d.actual, r = estado(a);
     $('#dTitle').textContent = name;
     $('#dTag').dataset.risk = r;
     $('#dTag use').setAttribute('href', '#i-' + r);
-    $('#dTagTxt').textContent = on ? 'Riesgo ' + LABEL[r].toLowerCase() : 'Sin conexión';
+    $('#dTagTxt').textContent = etiqueta(r);
     $('#dAdvice').dataset.risk = r;
+    $('#dAdvH').textContent = { bajo: 'Todo en orden', medio: 'Programa una revisión', alto: 'Requiere mantenimiento', offline: 'Sin conexión' }[r];
+    $('#dMsg').textContent = a.conectado ? a.mensaje : 'Los valores corresponden a la última lectura recibida.';
     const ul = $('#dRec'); ul.replaceChildren();
-    const add = t => { const li = document.createElement('li'); li.textContent = t; ul.append(li); };
-    if (!on) {
-      $('#dAdvH').textContent = 'Sin conexión';
-      $('#dMsg').textContent = `Este equipo no envía datos ${ago(a.segundos_sin_datos)}. Los valores de abajo son los últimos que recibimos.`;
-      add('Revisa que el equipo esté encendido y conectado a la red.');
-      add('Comprueba que el agente (NexMaintAgent) siga abierto en ese equipo.');
-    } else {
-      $('#dAdvH').textContent = { bajo: 'Todo en orden', medio: 'Programa una revisión', alto: 'Requiere mantenimiento' }[r];
-      $('#dMsg').textContent = a.mensaje;
-      if (r !== 'bajo') (a.recomendacion || '').split(/(?<=\.)\s+/).filter(Boolean).forEach(add);
-    }
+    if (r === 'medio' || r === 'alto') (a.recomendacion || '').split(/(?<=\.)\s+/).filter(Boolean).forEach(t => { const li = document.createElement('li'); li.textContent = t; ul.append(li); });
     for (const k of ['cpu', 'ram', 'disco']) {
       const g = $(`.g[data-k="${k}"]`, drawer);
-      setRing($('.ring', g), a[k], on ? level(k, a[k]) : 'off');
+      setRing($('.ring', g), a[k], a.conectado ? level(k, a[k]) : 'offline');
       const b = $('.gv', g); tween(b, a[k]);
     }
-    $('#thermo').dataset.est = est ? '1' : '0';
-    $('#thermoTitle').textContent = est ? 'Temperatura estimada' : 'Temperatura';
-    $('#thermoNote').hidden = !est;
-    $('#capTemp').textContent = est ? 'Temperatura estimada en las últimas mediciones' : 'Temperatura en las últimas mediciones';
     const pos = clamp((a.temperatura - 30) / 80 * 100, 0, 100);
     $('#mark').style.left = pos + '%';
-    $('#markV').textContent = (est ? '~' : '') + a.temperatura + ' °C';
+    $('#markV').textContent = a.temperatura + ' °C';
+    $('#dThermo').classList.toggle('estimated', a.temp_estimada);
+    $('#dTempTitle').textContent = a.temp_estimada ? 'Temperatura estimada' : 'Temperatura';
     const hist = d.historial;
     const cpuV = hist.map(p => p.cpu), tV = hist.map(p => p.temperatura);
-    $('#chCpu').innerHTML = chart('cpu', cpuV, { min: 0, max: 100, thr: 90, unit: '%', label: 'CPU', lvl: on ? level('cpu', a.cpu) : 'off' });
-    // Si es estimada no se dibuja el umbral de riesgo: esa temperatura no entra en el cálculo
-    $('#chTemp').innerHTML = chart('temp', tV, { min: 30, max: 110, thr: est ? null : 80, unit: '°C',
-      label: est ? 'Temperatura estimada' : 'Temperatura', lvl: !on || est ? 'off' : level('temp', a.temperatura) });
+    const incluyeEstimadas = hist.some(p => p.temp_estimada);
+    const tituloTemp = incluyeEstimadas ? 'Temperatura (incluye estimaciones)' : 'Temperatura';
+    $('#dTempChartTitle').textContent = tituloTemp + ' en las últimas mediciones';
+    $('#chCpu').innerHTML = chart('cpu', cpuV, { min: 0, max: 100, thr: 90, guia: 'Uso alto de CPU desde 90 %', unit: '%', label: 'CPU', lvl: level('cpu', a.cpu) });
+    $('#chTemp').innerHTML = chart('temp', tV, { min: 30, max: 110, thr: incluyeEstimadas ? null : 80, guia: 'Temperatura alta desde 80 °C', unit: '°C', label: tituloTemp, lvl: incluyeEstimadas ? 'offline' : level('temp', a.temperatura) });
+    paintIa(a, hist);
+    const procs = a.procesos || [];
+    $('#dProcsBox').hidden = !procs.length;
+    $('#dProcs').replaceChildren(...procs.map(p => {
+      const li = document.createElement('li'), n = document.createElement('b'), v = document.createElement('span');
+      n.textContent = p.nombre; v.textContent = `${mem(p.ram_mb)} · ${p.cpu} % CPU`; li.append(n, v); return li;
+    }));
     $('#dFree').textContent = `Espacio libre en disco: ${a.espacio_libre} GB`;
-    $('#dWhen').textContent = `Última medición: ${a.fecha}`;
+    $('#dUptime').textContent = a.uptime_segundos == null ? 'Tiempo encendido sin datos' : `Tiempo encendido al medir: ${duracion(a.uptime_segundos)}`;
+    $('#dWhen').textContent = `${ultimaMedicion(a)} (${a.fecha})`;
   }
 
   async function refreshDrawer() {
@@ -298,7 +330,7 @@
   $('#dClose').addEventListener('click', closeDrawer);
   scrim.addEventListener('click', closeDrawer);
   document.addEventListener('keydown', e => {
-    if (!st.sel) return;
+    if (!st.sel || e.target.closest('#chat, #chatBtn')) return;
     if (e.key === 'Escape') { closeDrawer(); return; }
     if (e.key === 'Tab') {
       const f = $$('button, [href], summary', drawer).filter(el => !el.disabled);
@@ -316,33 +348,88 @@
     const live = $('#live'), txt = $('#liveText');
     const idle = Math.round((Date.now() - st.lastChange) / 1000);
     if (!st.ok) { live.dataset.state = 'off'; txt.textContent = st.first ? 'Conectando…' : 'Sin conexión con el servidor. Reintentando…'; }
-    else if (st.tiles.size && idle > 10) { live.dataset.state = 'stale'; txt.textContent = `Sin mediciones nuevas hace ${idle} s`; }
+    else if (!st.tiles.size) { live.dataset.state = 'stale'; txt.textContent = 'Esperando mediciones…'; }
+    else if (!st.conectado) { live.dataset.state = 'stale'; txt.textContent = 'Ningún equipo conectado'; }
+    else if (idle > 10) { live.dataset.state = 'stale'; txt.textContent = `Sin mediciones nuevas hace ${idle} s`; }
     else { live.dataset.state = 'live'; txt.textContent = 'En vivo'; }
   }
   setInterval(tick, 1000); tick();
 
-  /* Modo demostración: "Simular fallo" lleva a PC-DEMO de normal a crítico en ~30 s */
-  async function demoEstado(eq) {
+  /* Demostración */
+  async function cambiarDemo(accion) {
+    const iniciar = accion === 'fallo';
+    const mensaje = $('#demoMessage');
+    st.demoBusy = true;
+    $('#demoStart').disabled = true;
+    $('#demoReset').disabled = true;
     try {
-      const d = await j('/api/demo'), btn = $('#demoBtn');
-      btn.disabled = d.activo;
-      btn.textContent = d.activo ? 'Simulando…' : 'Simular fallo';
-      $('#demoReset').hidden = !eq.some(e => e.nombre === NOMBRE_DEMO);
-    } catch { /* la demo es opcional: si falla, no afecta al resto */ }
+      await j('/api/demo/' + accion, { method: 'POST' });
+      mensaje.textContent = iniciar ? 'PC-DEMO subirá a riesgo alto en unos 30 s.' : 'Simulación retirada.';
+      await poll();
+    } catch (error) {
+      mensaje.textContent = error.message === '409'
+        ? (iniciar ? 'La simulación ya está en curso.' : 'Espera unos segundos y vuelve a quitar la simulación.')
+        : 'No se pudo completar la acción de la simulación.';
+    } finally {
+      st.demoBusy = false;
+      $('#demoStart').disabled = false;
+      $('#demoReset').disabled = !st.tiles.has('PC-DEMO');
+    }
   }
-  async function initDemo() {
-    try { const c = await j('/api/config'); st.demo = !!c.demo; $('#demoBox').hidden = !st.demo; } catch { /* sin demo */ }
+  $('#demoStart').addEventListener('click', () => cambiarDemo('fallo'));
+  $('#demoReset').addEventListener('click', () => cambiarDemo('reset'));
+  j('/api/config').then(config => { $('#demoControls').hidden = !config.demo; }).catch(() => {});
+
+  /* Estado de la IA */
+  async function cargarIa() {
+    try {
+      st.ia = await j('/api/ia');
+      const pill = $('#iaPill');
+      pill.hidden = false;
+      pill.dataset.state = st.ia.disponible ? 'ready' : 'training';
+      pill.textContent = st.ia.disponible ? 'IA activa' : 'IA entrenando…';
+      pill.title = st.ia.disponible ? `${st.ia.algoritmo}. Entrenado con datos ${st.ia.fuente} (${st.ia.n_reales} reales, ${st.ia.n_simuladas} simulados).` : '';
+    } catch { /* la IA es un complemento: el dashboard sigue sin ella */ }
   }
-  $('#demoBtn').addEventListener('click', async () => {
-    $('#demoBtn').disabled = true;
-    try { await j('/api/demo/fallo', { method: 'POST' }); } catch { /* ya estaba en curso */ }
-    poll();
-  });
-  $('#demoReset').addEventListener('click', async () => {
-    try { await j('/api/demo/reset', { method: 'POST' }); } catch { /* nada que quitar */ }
-    st.alertSig = '';
-    poll();
-  });
+  cargarIa(); setInterval(cargarIa, 30000);
+
+  /* Asistente */
+  const chat = $('#chat'), chatBtn = $('#chatBtn'), log = $('#chatLog'), input = $('#chatInput');
+  const INICIALES = ['¿Cuál equipo está peor?', 'Resumen del laboratorio', '¿Por qué está alta la RAM?', '¿Cómo funciona la IA?'];
+  function mensaje(texto, quien) {
+    const m = document.createElement('div');
+    m.className = 'msg ' + quien; m.textContent = texto;
+    log.append(m);
+    // Las respuestas largas se leen desde el principio; lo demás baja hasta el final
+    if (quien === 'bot') m.scrollIntoView({ block: 'start' }); else log.scrollTop = log.scrollHeight;
+    return m;
+  }
+  function chips(lista) {
+    $('#chatChips').replaceChildren(...lista.slice(0, 3).map(t => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = t;
+      b.addEventListener('click', () => preguntar(t)); return b;
+    }));
+  }
+  async function preguntar(texto) {
+    texto = (texto || '').trim(); if (!texto) return;
+    mensaje(texto, 'user'); input.value = '';
+    const espera = mensaje('Pensando…', 'bot typing');
+    try {
+      const r = await j('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pregunta: texto }) });
+      espera.remove(); mensaje(r.respuesta, 'bot'); chips(r.sugerencias || INICIALES);
+    } catch { espera.remove(); mensaje('No pude consultar al servidor. Inténtalo de nuevo en unos segundos.', 'bot'); }
+  }
+  function abrirChat(abrir) {
+    chat.hidden = !abrir; chatBtn.hidden = abrir; chatBtn.setAttribute('aria-expanded', String(abrir));
+    if (abrir) {
+      if (!log.children.length) { mensaje('Hola, soy el asistente de NextMaint. Respondo con los datos reales de tus equipos y con el análisis de la IA. ¿Qué quieres saber?', 'bot'); chips(INICIALES); }
+      input.focus();
+    } else chatBtn.focus();
+  }
+  chatBtn.addEventListener('click', () => abrirChat(true));
+  $('#chatClose').addEventListener('click', () => abrirChat(false));
+  chat.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); abrirChat(false); } });
+  $('#chatForm').addEventListener('submit', e => { e.preventDefault(); preguntar(input.value); });
 
   /* Ciclo de actualización */
   let timer = null, busy = false;
@@ -353,12 +440,12 @@
       eq.sort((a, b) => a.nombre.localeCompare(b.nombre, undefined, { numeric: true }));
       if (st.first) { await seedHistory(eq); st.lastChange = Date.now(); }
       st.ok = true;
+      st.conectado = eq.some(e => e.conectado);
       renderFloor(eq); renderSummary(eq); renderAlerts(al);
       if (st.sel) refreshDrawer();
-      if (st.demo) await demoEstado(eq);
       st.first = false;
     } catch { st.ok = false; }
     finally { busy = false; tick(); timer = setTimeout(poll, POLL_MS); }
   }
-  initDemo().then(poll);
+  poll();
 })();
